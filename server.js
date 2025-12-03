@@ -1,11 +1,11 @@
 const express = require("express");
 const axios = require("axios");
-// const path = require("path");
+const path = require("path");
 const app = express();
 const cors = require('cors');
 const PORT = 3000;
 
-// app.use(express.static(path.join(__dirname, "dist")));
+app.use(express.static(path.join(__dirname, "dist")));
 app.use(cors());
 
 app.get("/api/weather/:lat/:lng", async (req, res) => {
