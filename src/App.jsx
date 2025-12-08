@@ -11,33 +11,22 @@ function App() {
       day: "2-digit",
       month: "short",
     };
-
     return new Date(date)
       .toLocaleDateString("ru-RU", options)
       .replace(/\s/g, " ");
   };
 
   const getWindDirection = (data) => {
-    if (!data) return;
-
+    if (!data?.current?.wind_direction_10m) return "—";
     const degrees = data.current.wind_direction_10m;
-    if (degrees >= 337.5 || degrees < 22.5) {
-      return "Северный";
-    } else if (degrees >= 22.5 && degrees < 67.5) {
-      return "Северо-восточный";
-    } else if (degrees >= 67.5 && degrees < 112.5) {
-      return "Восточный";
-    } else if (degrees >= 112.5 && degrees < 157.5) {
-      return "Юго-восточный";
-    } else if (degrees >= 157.5 && degrees < 202.5) {
-      return "Южный";
-    } else if (degrees >= 202.5 && degrees < 247.5) {
-      return "Юго-западный";
-    } else if (degrees >= 247.5 && degrees < 292.5) {
-      return "Западный";
-    } else {
-      return "Северо-западный";
-    }
+    if (degrees >= 337.5 || degrees < 22.5) return "Северный";
+    if (degrees >= 22.5 && degrees < 67.5) return "Северо-восточный";
+    if (degrees >= 67.5 && degrees < 112.5) return "Восточный";
+    if (degrees >= 112.5 && degrees < 157.5) return "Юго-восточный";
+    if (degrees >= 157.5 && degrees < 202.5) return "Южный";
+    if (degrees >= 202.5 && degrees < 247.5) return "Юго-западный";
+    if (degrees >= 247.5 && degrees < 292.5) return "Западный";
+    return "Северо-западный";
   };
 
   const getWeatherIcon = (code, w) => {
@@ -62,10 +51,9 @@ function App() {
       82: "icon-11.svg",
       95: "icon-12.svg",
     };
-
-    return (
-      <img src={`src/images/icons/${WMO_CODE_MAP[code]}`} alt="" width={w} />
-    );
+    // Используем путь от корня — важно для GH Pages
+    const iconPath = `/src/images/icons/${WMO_CODE_MAP[code] || "icon-1.svg"}`;
+    return <img src={iconPath} alt="" width={w} />;
   };
 
   const handleLocationNameChange = (e) => {
@@ -73,26 +61,71 @@ function App() {
   };
 
   const getLocationLatLng = async () => {
-    const response = await fetch(
-      `http://localhost:3000/api/coordinates/${locationName}`
-    );
-    const result = await response.json();
-    setLatLng({
-      lat: result.results[0].latitude,
-      lng: result.results[0].longitude,
-    });
-    setApiLocationName(result.results[0].name);
+    try {
+      const response = await fetch(
+        `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(locationName)}&count=1&language=ru&format=json`
+      );
+      const result = await response.json();
+      if (result.results?.length > 0) {
+        const first = result.results[0];
+        setLatLng({
+          lat: first.latitude,
+          lng: first.longitude,
+        });
+        setApiLocationName(first.name || locationName);
+      } else {
+        alert("Город не найден");
+      }
+    } catch (err) {
+      console.error("Ошибка геокодинга:", err);
+      alert("Не удалось найти координаты");
+    }
   };
 
   const fetchWeather = async () => {
-    console.log(latLng);
-    const response = await fetch(
-      `http://localhost:3000/api/weather/${latLng.lat}/${latLng.lng}`
-    );
-    const result = await response.json();
-    setWeatherData(result);
+    if (!latLng.lat || !latLng.lng) return;
+    try {
+      const url = new URL("https://api.open-meteo.com/v1/forecast");
+      url.search = new URLSearchParams({
+        latitude: latLng.lat,
+        longitude: latLng.lng,
+        current: "temperature_2m,relative_humidity_2m,wind_speed_10m,wind_direction_10m,weather_code",
+        daily: "weather_code,temperature_2m_max,temperature_2m_min",
+        timezone: "Europe/Moscow",
+        forecast_days: "7"
+      });
+
+      const response = await fetch(url);
+      const result = await response.json();
+
+      if (result.error) {
+        throw new Error(result.reason || "Ошибка API");
+      }
+
+      const formatted = {
+        current: {
+          time: result.current.time || new Date().toISOString().split("T")[0],
+          temperature_2m: result.current.temperature_2m,
+          relative_humidity_2m: result.current.relative_humidity_2m,
+          wind_speed_10m: result.current.wind_speed_10m,
+          wind_direction_10m: result.current.wind_direction_10m,
+          weather_code: result.current.weather_code
+        },
+        daily: {
+          time: result.daily.time,
+          weather_code: result.daily.weather_code,
+          temperature_2m_max: result.daily.temperature_2m_max,
+          temperature_2m_min: result.daily.temperature_2m_min
+        }
+      };
+      setWeatherData(formatted);
+    } catch (err) {
+      console.error("Ошибка загрузки погоды:", err);
+      alert("Не удалось загрузить погоду");
+    }
   };
 
+  // Загружаем погоду при старте и при изменении координат
   useEffect(() => {
     fetchWeather();
   }, [latLng]);
@@ -101,13 +134,17 @@ function App() {
     <div className="site-content">
       <div className="hero">
         <div className="container">
-          <form action="#" className="find-location">
+          <form 
+            className="find-location" 
+            onSubmit={(e) => { e.preventDefault(); getLocationLatLng(); }}
+          >
             <input
               type="text"
+              value={locationName}
               onChange={handleLocationNameChange}
               placeholder="Ваше местоположение ..."
             />
-            <input type="submit" value="Найти" onClick={getLocationLatLng} />
+            <input type="submit" value="Найти" />
           </form>
         </div>
       </div>
@@ -118,70 +155,57 @@ function App() {
               <div className="forecast-header">
                 <div className="day">Сегодня</div>
                 <div className="date">
-                  {weatherData
-                    ? formatDateDDMMM(weatherData.current.time)
-                    : null}
+                  {weatherData ? formatDateDDMMM(weatherData.current.time) : "—"}
                 </div>
               </div>
               <div className="forecast-content">
-                <div className="location">{apiLocationName}</div>
+                <div className="location">{apiLocationName || "—"}</div>
                 <div className="degree">
                   <div className="num">
-                    {weatherData ? weatherData.current.temperature_2m : null}
-                    <sup>o</sup>C
+                    {weatherData ? `${Math.round(weatherData.current.temperature_2m)} ` : "— "}
+                    <sup>°</sup>C
                   </div>
                   <div className="forecast-icon">
-                    {weatherData
-                      ? getWeatherIcon(weatherData.current.weather_code, 90)
-                      : null}
+                    {weatherData ? getWeatherIcon(weatherData.current.weather_code, 90) : null}
                   </div>
                 </div>
                 <span>
-                  <img src="src/images/icon-umberella.png" alt="" />
-                  {weatherData
-                    ? weatherData.current.relative_humidity_2m + "%"
-                    : null}
+                  <img src="/src/images/icon-umberella.png" alt="Влажность" />
+                  {weatherData ? `${weatherData.current.relative_humidity_2m}%` : "—"}
                 </span>
                 <span>
-                  <img src="src/images/icon-wind.png" alt="" />
-                  {weatherData
-                    ? weatherData.current.wind_speed_10m + "км/ч"
-                    : null}
+                  <img src="/src/images/icon-wind.png" alt="Ветер" />
+                  {weatherData ? `${weatherData.current.wind_speed_10m} км/ч` : "—"}
                 </span>
                 <span>
-                  <img src="src/images/icon-compass.png" alt="" />
+                  <img src="/src/images/icon-compass.png" alt="Направление" />
                   {getWindDirection(weatherData)}
                 </span>
               </div>
             </div>
             {weatherData
-              ? [1, 2, 3, 4, 5, 6].map((item) => {
-                  return (
-                    <div className="forecast">
-                      <div className="forecast-header">
-                        <div className="day">
-                          {formatDateDDMMM(weatherData.daily.time[item])}
-                        </div>
-                      </div>
-                      <div className="forecast-content">
-                        <div className="forecast-icon">
-                          {getWeatherIcon(
-                            weatherData.daily.weather_code[item],
-                            48
-                          )}
-                        </div>
-                        <div className="degree">
-                          {weatherData.daily.temperature_2m_max[item]}
-                          <sup>o</sup>C
-                        </div>
-                        <small>
-                          {weatherData.daily.temperature_2m_min[item]}
-                          <sup>o</sup>
-                        </small>
+              ? [1, 2, 3, 4, 5, 6].map((item) => (
+                  <div className="forecast" key={item}>
+                    <div className="forecast-header">
+                      <div className="day">
+                        {formatDateDDMMM(weatherData.daily.time[item])}
                       </div>
                     </div>
-                  );
-                })
+                    <div className="forecast-content">
+                      <div className="forecast-icon">
+                        {getWeatherIcon(weatherData.daily.weather_code[item], 48)}
+                      </div>
+                      <div className="degree">
+                        {Math.round(weatherData.daily.temperature_2m_max[item])}
+                        <sup>°</sup>C
+                      </div>
+                      <small>
+                        {Math.round(weatherData.daily.temperature_2m_min[item])}
+                        <sup>°</sup>
+                      </small>
+                    </div>
+                  </div>
+                ))
               : null}
           </div>
         </div>
